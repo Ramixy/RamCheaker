@@ -1,0 +1,5 @@
+dist/
+build.rsp
+tools/*
+!tools/README.md
+*.exe
