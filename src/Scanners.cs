@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -123,7 +124,75 @@ namespace InjectHunter
         public double Progress;
         public int ProcCount, ModulesChecked;
 
-        void Emit(Finding f) { f.Finish(); if (f.Severity > 0 && Found != null) Found(f); }
+        /// <summary>Показывать все загруженные модули списком (чистые — с пометкой «ОК»).</summary>
+        public bool ListAll = true;
+        public int Suspicious;
+        HashSet<string> shown = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, SigInfo> sigCache = new Dictionary<string, SigInfo>(StringComparer.OrdinalIgnoreCase);
+
+        void Emit(Finding f)
+        {
+            f.Finish();
+            if (f.Severity > 0) { shown.Add(f.Source + "|" + f.Path); Suspicious++; }
+            if (f.Severity > 0 && Found != null) Found(f);
+        }
+
+        /// <summary>Карточка процесса Minecraft: версия, загрузчик, время работы и подозрительные аргументы запуска.</summary>
+        void ProcessCard(Process p, string tag, Dictionary<int, SysInfo.Proc> wmi)
+        {
+            Finding f = new Finding();
+            f.FileName = tag; f.Source = tag; f.RealType = "PRC · Процесс Minecraft";
+            f.Origin = "—";
+            string exe = null;
+            try { exe = p.MainModule.FileName; } catch { }
+            SysInfo.Proc wp;
+            string cmd = wmi.TryGetValue(p.Id, out wp) ? wp.CommandLine : null;
+            if (exe == null && wp != null) exe = wp.Path;
+            f.Path = exe ?? tag;
+            try { f.Modified = p.StartTime; f.Note("Запущен: " + p.StartTime.ToString("dd.MM.yyyy HH:mm:ss") + " (" + (int)(DateTime.Now - p.StartTime).TotalMinutes + " мин назад)"); } catch { }
+            if (!string.IsNullOrEmpty(cmd))
+            {
+                Match ver = Regex.Match(cmd, @"--version\s+(""[^""]+""|\S+)");
+                if (ver.Success) f.Note("Версия: " + ver.Groups[1].Value.Trim('"'));
+                string l = cmd.ToLowerInvariant();
+                string loader = l.Contains("fabric") ? "Fabric" : l.Contains("quilt") ? "Quilt" : l.Contains("neoforge") ? "NeoForge" : l.Contains("forge") || l.Contains("fml") ? "Forge" : l.Contains("optifine") ? "OptiFine" : "Vanilla/неизвестно";
+                f.Note("Загрузчик: " + loader);
+                foreach (Match m in Regex.Matches(cmd, @"-(javaagent|agentpath):(""[^""]+""|\S+)", RegexOptions.IgnoreCase))
+                {
+                    string file = m.Groups[2].Value.Trim('"').Split('=')[0];
+                    if (Regex.IsMatch(file, "authlib-injector|authlibinjector|lunar|feather|badlion|labymod|jacoco|idea_rt|essential|tlauncher", RegexOptions.IgnoreCase)) { f.Note("Агент лаунчера: " + file); continue; }
+                    f.Add(m.Groups[1].Value.ToLowerInvariant() == "javaagent" ? 55 : 65, "Запущен с агентом -" + m.Groups[1].Value + ": " + file + " — так подгружаются чит-клиенты");
+                }
+                if (Regex.IsMatch(cmd, @"-agentlib:jdwp", RegexOptions.IgnoreCase)) f.Add(25, "Запущен с отладчиком (-agentlib:jdwp) — к игре можно подключаться извне");
+                if (Regex.IsMatch(cmd, @"-Xbootclasspath/[ap]:", RegexOptions.IgnoreCase)) f.Add(35, "Запущен с -Xbootclasspath — подмена системных классов Java");
+                foreach (LegitScanner.JvmFlag jf in LegitScanner.JvmFlags(cmd))
+                    if (jf.Pts > 0) f.Add(jf.Pts, jf.Text); else f.Note(jf.Text);
+                f.Note("Команда запуска: " + (cmd.Length > 1500 ? cmd.Substring(0, 1500) + "…" : cmd));
+            }
+            else f.Note("Командная строка недоступна — запусти от администратора");
+            f.Finish();
+            if (f.Severity > 0) Suspicious++;
+            if (Found != null) Found(f);
+        }
+
+        void ListModule(string path, string tag)
+        {
+            if (shown.Contains(tag + "|" + path)) return;
+            Finding f = new Finding();
+            f.Path = path; f.FileName = Path.GetFileName(path); f.Ext = Path.GetExtension(path).ToLowerInvariant(); f.Source = tag;
+            f.Origin = "—";
+            SigInfo sig;
+            if (!sigCache.TryGetValue(path, out sig)) { try { sig = Native.CheckSignature(path); } catch { } sigCache[path] = sig; }
+            f.Sig = sig;
+            string kind = Analyzer.IsUnder(path, Analyzer.WinDir) ? "Windows" : Analyzer.IsJavaRuntimeDir(Path.GetDirectoryName(path) ?? "") ? "Java" :
+                          path.IndexOf("lwjgl", StringComparison.OrdinalIgnoreCase) >= 0 || path.IndexOf("natives", StringComparison.OrdinalIgnoreCase) >= 0 ? "Minecraft" : "Сторонняя";
+            f.RealType = "DLL · " + kind + (sig != null && sig.Trusted ? " · подписана" : " · без подписи");
+            try { FileInfo fi = new FileInfo(path); f.Size = fi.Length; f.Modified = fi.LastWriteTime; f.Created = fi.CreationTime; } catch { }
+            f.Note("Загружена в " + tag + " — признаков чита нет");
+            if (sig != null) f.Note(sig.ToString());
+            f.Finish();
+            if (Found != null) Found(f);
+        }
 
         public void Run(ScanOptions o, bool memScan, CancellationToken ct)
         {
@@ -131,22 +200,29 @@ namespace InjectHunter
             foreach (string n in new string[] { "javaw", "java" })
                 try { procs.AddRange(Process.GetProcessesByName(n)); } catch { }
             ProcCount = procs.Count;
+            Dictionary<int, SysInfo.Proc> wmi = new Dictionary<int, SysInfo.Proc>();
+            if (procs.Count > 0) foreach (SysInfo.Proc sp in SysInfo.Processes()) wmi[sp.Pid] = sp;
             for (int i = 0; i < procs.Count; i++)
             {
                 if (ct.IsCancellationRequested) break;
                 Process p = procs[i];
                 string tag = p.ProcessName + ".exe (PID " + p.Id + ")";
+                try { ProcessCard(p, tag, wmi); } catch { }
                 Current = tag + " — модули";
                 HashSet<long> bases = new HashSet<long>();
+                List<string> all = new List<string>();
                 try
                 {
                     foreach (ProcessModule m in p.Modules)
                     {
                         if (ct.IsCancellationRequested) break;
                         bases.Add(m.BaseAddress.ToInt64());
+                        all.Add(m.FileName);
                         CheckModule(m.FileName, tag, o);
                         ModulesChecked++;
                     }
+                    if (ListAll)
+                        foreach (string m in all) { if (ct.IsCancellationRequested) break; Current = tag + " — список модулей"; if (File.Exists(m)) ListModule(m, tag); }
                 }
                 catch (Exception ex)
                 {
@@ -309,7 +385,7 @@ namespace InjectHunter
                 foreach (Region r in regs)
                 {
                     if (ct.IsCancellationRequested) break;
-                    if (r.Type == Native.MEM_IMAGE || r.Size > 256L * 1024 * 1024) continue;
+                    if (r.Type == Native.MEM_IMAGE || r.Type == Native.MEM_MAPPED || r.Size > 256L * 1024 * 1024) continue; // файлы, отображённые в память (модули JDK), дают ложные совпадения
                     long off = 0;
                     int s1 = 0, s2 = 0;
                     while (off < r.Size)

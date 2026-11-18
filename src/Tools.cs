@@ -20,7 +20,7 @@ namespace InjectHunter
     static class Tools
     {
         public static List<ToolInfo> All = new List<ToolInfo>();
-        public static string Root = Path.Combine(Path.GetTempPath(), "RamCheaker", "tools");
+        public static string Root = Path.Combine(Path.GetTempPath(), "RamixyCheaker", "tools");
 
         // file -> title | описание | группа
         static readonly string[,] meta = {
@@ -40,13 +40,22 @@ namespace InjectHunter
             { "OpenedFilesView.exe.zip", "OpenedFilesView", "Файлы, открытые процессами прямо сейчас", "NirSoft" },
             { "installedpackagesview-x64.zip", "InstalledPackagesView", "Установленные программы и пакеты", "NirSoft" },
             { "regscanner-x64.zip", "RegScanner", "Поиск по реестру", "NirSoft" },
+            { "browsinghistoryview-x64.zip", "BrowsingHistoryView", "История всех браузеров одним списком — какие сайты открывали и когда", "NirSoft" },
+            { "alternatestreamview-x64.zip", "AlternateStreamView", "Скрытые потоки NTFS: метки Zone.Identifier (откуда скачан файл) и спрятанные в потоках данные", "NirSoft" },
+            { "userassistview.zip", "UserAssistView", "UserAssist: какие программы запускали через проводник и сколько раз", "NirSoft" },
+            { "turnedontimesview.zip", "TurnedOnTimesView", "Когда компьютер включали и выключали — сверить со временем проверки", "NirSoft" },
+            { "opensavefilesview-x64.zip", "OpenSaveFilesView", "Файлы, выбранные в окнах «Открыть/Сохранить» любой программы", "NirSoft" },
+            { "loadeddllsview-x64.zip", "LoadedDllsView", "Все DLL, загруженные в процессы — найти чужую DLL в javaw", "NirSoft" },
+            { "Autoruns.zip", "Autoruns", "Sysinternals (Microsoft): всё, что стартует вместе с Windows — службы, драйверы, задачи", "Sysinternals" },
+            { "ProcessExplorer.zip", "Process Explorer", "Sysinternals (Microsoft): процессы, их DLL, подписи, проверка на VirusTotal", "Sysinternals" },
+            { "ProcessMonitor.zip", "Process Monitor", "Sysinternals (Microsoft): что прямо сейчас делают процессы с файлами и реестром", "Sysinternals" },
             { "Everything-1.4.1.1026.x86-Setup.exe", "Everything", "Мгновенный поиск файлов по имени и размеру", "Установщики" },
             { "processhacker-2.39-setup.exe", "Process Hacker", "Процессы, модули, строки в памяти", "Установщики" },
             { "systeminformer-3.2.25011-release-setup.exe", "System Informer", "Новая версия Process Hacker", "Установщики" },
             { "rcsetup155.exe", "Recuva", "Восстановление удалённых файлов", "Установщики" },
         };
 
-        // NirSoft-утилиты, которые RamCheaker запускает сам (только с подписью Nir Sofer) и проверяет их выгрузку
+        // NirSoft-утилиты, которые RamixyCheaker запускает сам (только с подписью Nir Sofer) и проверяет их выгрузку
         static readonly Dictionary<string, string> nirAuto = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
             { "winprefetchview-x64.zip", "WinPrefetchView.exe" },
             { "executedprogramslist.zip", "ExecutedProgramsList.exe" },
@@ -77,7 +86,7 @@ namespace InjectHunter
                 try { using (Stream s = asm.GetManifestResourceStream(r)) t.Size = s.Length; } catch { }
                 All.Add(t);
             }
-            string[] order = { "SS-утилиты", "NirSoft", "Установщики", "Другое" };
+            string[] order = { "SS-утилиты", "NirSoft", "Sysinternals", "Установщики", "Другое" };
             All = All.OrderBy(x => Array.IndexOf(order, x.Group)).ThenBy(x => x.Title).ToList();
         }
 

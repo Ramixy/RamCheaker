@@ -266,6 +266,7 @@ namespace InjectHunter
         public const uint MEM_COMMIT = 0x1000;
         public const uint MEM_PRIVATE = 0x20000;
         public const uint MEM_IMAGE = 0x1000000;
+        public const uint MEM_MAPPED = 0x40000;
         public const uint PAGE_NOACCESS = 0x01;
         public const uint PAGE_GUARD = 0x100;
         public const uint PAGE_EXECUTE = 0x10, PAGE_EXECUTE_READ = 0x20, PAGE_EXECUTE_READWRITE = 0x40, PAGE_EXECUTE_WRITECOPY = 0x80;

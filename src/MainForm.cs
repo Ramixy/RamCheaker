@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -29,11 +29,11 @@ namespace InjectHunter
 
     class MainForm : Form
     {
-        public const string AppName = "RamCheaker";
-        public const string Version = "3.0";
+        public const string AppName = "RamixyCheaker";
+        public const string Version = "4.0";
 
         List<Sec> secs = new List<Sec>();
-        Sec sOverview, sHidden, sOpen, sMem, sTraces, sLegit, sMods, sTools, sWords;
+        Sec sOverview, sHidden, sOpen, sMem, sTraces, sBypass, sMods, sFind, sDec, sTools, sWords, shown;
         Panel host;
         System.Windows.Forms.Timer uiTimer;
         CancellationTokenSource cts;
@@ -52,7 +52,7 @@ namespace InjectHunter
         List<DriveCard> driveCards = new List<DriveCard>();
 
         // опции
-        PillToggle tDisguise, tSysSig, tDeep, tExe, tJar, tSkip, tAll, tListAll, tMem, tNir;
+        PillToggle tDisguise, tSysSig, tDeep, tExe, tJar, tSkip, tAll, tListAll, tMem, tNir, tLegit, tOrigin, tModList;
         DropZone drop;
         FlowLayoutPanel toolsFlow;
         bool toolsSigChecked;
@@ -91,9 +91,14 @@ namespace InjectHunter
             {
                 int i; if (int.TryParse(autoArg.Substring(5), out i) && i >= 0 && i < secs.Count) Show(secs[i]);
             }
+            else if (autoArg.StartsWith("find:")) { Show(sFind); qBox.Box.Text = autoArg.Substring(5); StartIndex(true); }
+            else if (autoArg.StartsWith("dec:")) Inspect(autoArg.Substring(4));
             else if (autoArg == "all") StartAll();
             else if (autoArg == "open") { Show(sOpen); StartOpen(); }
-            else if (autoArg == "legit") { Show(sLegit); StartLegit(); }
+            else if (autoArg == "legit" || autoArg == "hidden") { Show(sHidden); StartHidden(null); }
+            else if (autoArg == "bypass") { Show(sBypass); StartBypass(); }
+            else if (autoArg == "mem") { Show(sMem); StartMem(); }
+            else if (autoArg == "traces") { Show(sTraces); StartTraces(); }
             else if (autoArg == "mods") { Show(sMods); StartMods(null); }
             else if (File.Exists(autoArg) || Directory.Exists(autoArg)) { Show(sMods); StartMods(new List<string> { autoArg }); }
         }
@@ -115,8 +120,10 @@ namespace InjectHunter
             sOpen = NewSec("Открытые читы", Theme.IcSearch);
             sMem = NewSec("Память javaw", Theme.IcCpu);
             sTraces = NewSec("Следы", Theme.IcHistory);
-            sLegit = NewSec("Legit-читы", Theme.IcBug);
+            sBypass = NewSec("Обходы проверки", Theme.IcWarn);
             sMods = NewSec("Моды и файлы", Theme.IcOpen);
+            sFind = NewSec("Поиск файлов", Theme.IcFilter);
+            sDec = NewSec("Декомпилятор", "\uE943");
             sTools = NewSec("Инструменты", Theme.IcTools);
             sWords = NewSec("Ключевые слова", Theme.IcTag);
 
@@ -124,8 +131,10 @@ namespace InjectHunter
             sOpen.Page = BuildOpen();
             sMem.Page = BuildMem();
             sTraces.Page = BuildTraces();
-            sLegit.Page = BuildLegit();
+            sBypass.Page = BuildBypass();
             sMods.Page = BuildMods();
+            sFind.Page = BuildFind();
+            dec = new DecompilerView(); sDec.Page = dec;
             sTools.Page = BuildTools();
             sWords.Page = BuildWords();
             sOverview.Page = BuildOverview();   // последним — нужны карточки остальных разделов
@@ -153,7 +162,7 @@ namespace InjectHunter
             side.Controls.Add(ver);
 
             int y = Theme.Px(88);
-            string[] groups = { null, "ПОИСК ЧИТОВ", null, null, null, null, "ПРОВЕРКА ФАЙЛОВ", "ПРОЧЕЕ", null };
+            string[] groups = { null, "ПОИСК ЧИТОВ", null, null, "СЛЕДЫ И ОБХОДЫ", null, "ПРОВЕРКА ФАЙЛОВ", null, null, "ПРОЧЕЕ", null };
             for (int i = 0; i < secs.Count; i++)
             {
                 if (groups[i] != null)
@@ -184,6 +193,7 @@ namespace InjectHunter
 
         void Show(Sec s)
         {
+            shown = s;
             foreach (Sec x in secs) { x.Page.Visible = x == s; x.Nav.Active = x == s; x.Nav.Invalidate(); }
             if (s == sTools && !toolsSigChecked) CheckToolSignatures();
         }
@@ -209,7 +219,8 @@ namespace InjectHunter
             s.R = new ResultsView(showClean); s.R.IdleTitle = "Пока пусто"; s.R.IdleSub = "Нажми «" + "Начать" + "», результаты появятся здесь";
             p.Controls.Add(s.R, 0, 4);
             Sec ss = s;
-            s.R.Added += f => { if (f.Severity >= 2 && rTop != null) rTop.Enqueue(TagSec(f, ss)); };
+            s.R.Added += f => { if (f.Severity >= 2 && rTop != null && ss != sFind) rTop.Enqueue(TagSec(f, ss)); };
+            HookInspect(s.R);
             return p;
         }
 
@@ -267,7 +278,7 @@ namespace InjectHunter
             p.RowStyles.Add(new RowStyle(SizeType.Absolute, Theme.Px(250)));
             p.RowStyles.Add(new RowStyle(SizeType.Absolute, Theme.Px(30)));
             p.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            PageTitle pt = new PageTitle("Сводка", "Одна кнопка проверяет всё: следы, открытые и скрытые читы, legit-читы, моды, память javaw"); pt.Dock = DockStyle.Fill;
+            PageTitle pt = new PageTitle("Сводка", "Одна кнопка проверяет всё: скрытые и открытые читы, legit-читы, память javaw, следы, обходы, моды. Отдельно — поиск файлов и декомпилятор"); pt.Dock = DockStyle.Fill;
             p.Controls.Add(pt, 0, 0);
 
             FlowLayoutPanel tb = Flow(new Padding(0, 0, 0, Theme.Px(8)));
@@ -291,13 +302,13 @@ namespace InjectHunter
             p.Controls.Add(tb, 0, 1);
 
             vAll = new VerdictBar(); vAll.Dock = DockStyle.Fill; vAll.Margin = new Padding(0, Theme.Px(4), 0, Theme.Px(10));
-            vAll.Set(VerdictBar.State.Idle, "Готов к проверке", "Отметь диски и нажми «Проверить всё». Можно запускать и разделы по отдельности.");
+            vAll.Set(VerdictBar.State.Idle, "Готов к проверке", "1) Отметь диски  ·  2) Нажми «Проверить всё»  ·  3) Смотри главные находки: красное — чит, оранжевое — проверь вручную, жёлтое — мелочь.");
             p.Controls.Add(vAll, 0, 2);
 
             TableLayoutPanel cards = new TableLayoutPanel(); cards.Dock = DockStyle.Fill; cards.ColumnCount = 3; cards.RowCount = 2; cards.BackColor = Theme.Bg; cards.Margin = Padding.Empty;
             for (int i = 0; i < 3; i++) cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.3f));
             cards.RowStyles.Add(new RowStyle(SizeType.Percent, 50)); cards.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-            Sec[] list = { sHidden, sOpen, sMem, sTraces, sLegit, sMods };
+            Sec[] list = { sHidden, sOpen, sMem, sTraces, sBypass, sMods };
             for (int i = 0; i < list.Length; i++)
             {
                 Sec s = list[i];
@@ -312,7 +323,7 @@ namespace InjectHunter
             Label lt = new Label(); lt.Text = "ГЛАВНЫЕ НАХОДКИ (критичные и подозрительные из всех разделов)"; lt.Font = Theme.Semi(8f); lt.ForeColor = Theme.Dim;
             lt.Dock = DockStyle.Fill; lt.TextAlign = ContentAlignment.BottomLeft; lt.BackColor = Theme.Bg;
             p.Controls.Add(lt, 0, 4);
-            rTop = new ResultsView(false, true); rTop.IdleTitle = "Пока нет находок"; rTop.IdleSub = "Здесь соберутся самые важные результаты всех проверок";
+            rTop = new ResultsView(false, true); HookInspect(rTop); rTop.IdleTitle = "Пока нет находок"; rTop.IdleSub = "Здесь соберутся самые важные результаты всех проверок";
             p.Controls.Add(rTop, 0, 5);
             return p;
         }
@@ -322,7 +333,7 @@ namespace InjectHunter
         Control BuildHidden()
         {
             FlowLayoutPanel tb, op;
-            TableLayoutPanel p = Page(sHidden, "Читы, которые прячутся: EXE/JAR под видом .dll/.ini/.png, тайники Windows, инжект в javaw. Подписанные системой файлы не трогаются.", out tb, out op, false);
+            TableLayoutPanel p = Page(sHidden, "Читы, которые прячутся: программы под видом .dll/.ini/.png, подделки системных файлов, legit-читы (кликеры, макросы, агенты javaw) и файлы, скачанные с сайтов читов. Подписанные системой файлы не трогаются.", out tb, out op, false);
             StdButtons(sHidden, tb, "Сканировать диски", () => StartHidden(null));
             FlatButton bf = Btn(tb, "Папка…", false, Theme.IcFolder);
             bf.Click += delegate
@@ -338,7 +349,9 @@ namespace InjectHunter
             tJar = Pill(op, ".jar", true);
             tSkip = Pill(op, "Пропускать служебные папки", true);
             tAll = Pill(op, "Все файлы (долго)", false);
-            sHidden.V.Set(VerdictBar.State.Idle, "Готов", "Диски выбираются на странице «Сводка».");
+            tLegit = Pill(op, "Legit-читы: кликеры, макросы, агенты", true);
+            tOrigin = Pill(op, "Откуда скачаны файлы: сайты читов, Discord, Telegram, Google, GitHub", true);
+            sHidden.V.Set(VerdictBar.State.Idle, "Готов", "Диски выбираются на странице «Сводка». Для каждой находки видно, с какого сайта скачан файл.");
             return p;
         }
 
@@ -351,6 +364,7 @@ namespace InjectHunter
             return o;
         }
 
+        LegitScanner legit; DownloadOriginScanner origins; volatile int hidPhase;
         void StartHidden(List<string> custom)
         {
             if (running != null) return;
@@ -361,19 +375,36 @@ namespace InjectHunter
             diskLabel = string.Join(", ", o.Roots.Select(r => r.Length <= 3 ? r.TrimEnd('\\') : r));
             disk = new DiskScanner();
             disk.Found += f => sHidden.R.Enqueue(f);
-            Run(sHidden, "Ищу скрытые читы на " + diskLabel, ct => disk.Run(o, ct),
+            legit = new LegitScanner();
+            legit.Found += f => sHidden.R.Enqueue(f);
+            origins = new DownloadOriginScanner();
+            origins.Found += f => sHidden.R.Enqueue(f);
+            bool doLegit = tLegit.Checked && !diskFolder, doOrigin = tOrigin.Checked && !diskFolder;
+            hidPhase = 0;
+            Run(sHidden, "Ищу скрытые читы на " + diskLabel, ct =>
+                {
+                    hidPhase = 0; disk.Run(o, ct);
+                    if (doLegit && !ct.IsCancellationRequested) { hidPhase = 1; legit.Run(ct); }
+                    if (doOrigin && !ct.IsCancellationRequested) { hidPhase = 2; origins.Run(ct); }
+                },
                 () =>
                 {
+                    if (hidPhase == 1) return 0.86 + 0.08 * legit.Progress;
+                    if (hidPhase == 2) return 0.95;
+                    double k = doLegit || doOrigin ? 0.86 : 1.0;
                     if (!diskFolder && disk.TotalBytes > 0)
                     {
                         double v = Math.Min(0.99, (double)disk.BytesSeen / disk.TotalBytes);
                         if (disk.FilesQueued > 0) v = Math.Min(v, 0.99 * (0.15 + 0.85 * disk.FilesDone / (double)Math.Max(1, disk.FilesQueued)));
-                        return v;
+                        return v * k;
                     }
-                    return disk.FilesQueued > 0 ? 0.95 * disk.FilesDone / (double)disk.FilesQueued : 0;
+                    return disk.FilesQueued > 0 ? 0.95 * k * disk.FilesDone / (double)disk.FilesQueued : 0;
                 },
-                () => disk.FilesDone.ToString("N0") + " из " + disk.FilesSeen.ToString("N0") + " · " + disk.Current,
-                () => diskLabel + " · файлов " + disk.FilesSeen.ToString("N0") + ", проанализировано " + disk.FilesDone.ToString("N0"));
+                () => hidPhase == 1 ? "Legit-читы · " + legit.Current
+                    : hidPhase == 2 ? "Откуда скачаны файлы · проверено " + origins.Checked.ToString("N0") + " · " + origins.Current
+                    : disk.FilesDone.ToString("N0") + " из " + disk.FilesSeen.ToString("N0") + " · " + disk.Current,
+                () => diskLabel + " · файлов " + disk.FilesSeen.ToString("N0") + ", проанализировано " + disk.FilesDone.ToString("N0") +
+                      (doLegit ? " · legit-читы проверены" : "") + (doOrigin ? " · скачанных файлов с меткой: " + origins.WithMark.ToString("N0") : ""));
         }
 
         // ======================= Открытые читы =======================
@@ -406,9 +437,10 @@ namespace InjectHunter
         Control BuildMem()
         {
             FlowLayoutPanel tb, op;
-            TableLayoutPanel p = Page(sMem, "Запущенный Minecraft: модули, скрытые и удалённые DLL, manual-map, строки читов и запрещённые моды в памяти", out tb, out op, false);
+            TableLayoutPanel p = Page(sMem, "Запущенный Minecraft: какие модули и DLL в него загружены, с какими аргументами он запущен, скрытые и удалённые DLL, строки читов в памяти", out tb, out op, true);
             StdButtons(sMem, tb, "Проверить javaw", StartMem);
             tMem = Pill(op, "Сканировать оперативную память", true);
+            tModList = Pill(op, "Показать все загруженные модули", true);
             sMem.V.Set(VerdictBar.State.Idle, "Запусти Minecraft и нажми «Проверить javaw»", "Чит должен быть загружен — проверка идёт по живому процессу.");
             return p;
         }
@@ -420,8 +452,9 @@ namespace InjectHunter
             proc = new ProcessScanner();
             proc.Found += f => sMem.R.Enqueue(f);
             bool mem = tMem.Checked;
+            proc.ListAll = tModList.Checked;
             Run(sMem, "Проверяю javaw", ct => proc.Run(o, mem, ct), () => proc.Progress, () => "модулей " + proc.ModulesChecked + " · " + proc.Current,
-                () => proc.ProcCount == 0 ? "Minecraft не был запущен — процессов java/javaw нет" : "Процессов: " + proc.ProcCount + ", модулей: " + proc.ModulesChecked);
+                () => proc.ProcCount == 0 ? "Minecraft не был запущен — процессов java/javaw нет" : "Процессов: " + proc.ProcCount + ", модулей: " + proc.ModulesChecked + " · фильтр «ОК» — чистые модули");
         }
 
         // ======================= Следы =======================
@@ -429,7 +462,7 @@ namespace InjectHunter
         Control BuildTraces()
         {
             FlowLayoutPanel tb, op;
-            TableLayoutPanel p = Page(sTraces, "История: Prefetch, BAM, UserAssist, MuiCache, AppCompat, недавние файлы, загрузки, папки лаунчеров — по списку слов", out tb, out op, false);
+            TableLayoutPanel p = Page(sTraces, "Что запускали и где бывали: история запусков Windows, недавние файлы, загрузки, папки лаунчеров, история браузеров и DNS-кэш — сайты читов видны, даже если файл удалён", out tb, out op, false);
             StdButtons(sTraces, tb, "Собрать следы", StartTraces);
             tNir = Pill(op, "Также через NirSoft (WinPrefetchView, ExecutedProgramsList, LastActivityView, RecentFiles, USBDeview)", true);
             sTraces.V.Set(VerdictBar.State.Idle, "Готов", "Находит запуски и файлы с названиями читов, даже если их уже удалили.");
@@ -446,23 +479,23 @@ namespace InjectHunter
                 () => "Источников: " + traces.Sources + ", записей проверено: " + traces.Entries.ToString("N0"));
         }
 
-        // ======================= Legit-читы =======================
-        LegitScanner legit;
-        Control BuildLegit()
+        // ======================= Обходы проверки =======================
+        BypassScanner bypass;
+        Control BuildBypass()
         {
             FlowLayoutPanel tb, op;
-            TableLayoutPanel p = Page(sLegit, "Незаметные читы: автокликеры, макросы (AutoHotkey, Bloody, Logitech G HUB), ghost-клиенты, Java-агенты в javaw", out tb, out op, false);
-            StdButtons(sLegit, tb, "Искать legit-читы", StartLegit);
-            sLegit.V.Set(VerdictBar.State.Idle, "Готов", "Проверяет процессы и окна, аргументы javaw, установленные программы, историю запусков, скрипты макросов.");
+            TableLayoutPanel p = Page(sBypass, "Пытались ли сломать проверку: блокировка сайтов и утилит, очистка журналов, выключенный Prefetch, удалённый USN-журнал. Ничего не меняет.", out tb, out op, false);
+            StdButtons(sBypass, tb, "Искать обходы", StartBypass);
+            sBypass.V.Set(VerdictBar.State.Idle, "Готов", "Без прав администратора часть журналов (Security) не читается.");
             return p;
         }
 
-        void StartLegit()
+        void StartBypass()
         {
             if (running != null) return;
-            legit = new LegitScanner();
-            legit.Found += f => sLegit.R.Enqueue(f);
-            Run(sLegit, "Ищу legit-читы", ct => legit.Run(ct), () => legit.Progress, () => legit.Current, () => "Проверено объектов: " + legit.Checked.ToString("N0"));
+            bypass = new BypassScanner();
+            bypass.Found += f => sBypass.R.Enqueue(f);
+            Run(sBypass, "Ищу обходы проверки", ct => bypass.Run(ct), () => bypass.Progress, () => bypass.Current, () => "Проверок выполнено: " + bypass.Checks);
         }
 
         // ======================= Моды и файлы =======================
@@ -524,8 +557,198 @@ namespace InjectHunter
             if (drop != null) { drop.Dragging = false; drop.Invalidate(); }
             string[] files = e.Data.GetData(DataFormats.FileDrop) as string[];
             if (files == null || files.Length == 0) return;
+            if (shown == sDec) { dec.Open(files[0]); return; }
             Show(sMods);
             StartMods(files.ToList());
+        }
+
+        // ======================= Поиск файлов (как Everything) =======================
+        FileIndex index, building;
+        SearchBox qBox;
+        PillToggle tProg, tDl;
+        CancellationTokenSource findCts;
+        System.Windows.Forms.Timer findTimer;
+        bool findAfterIndex;
+        DecompilerView dec;
+        static readonly HashSet<string> progExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+            ".exe", ".dll", ".jar", ".zip", ".rar", ".7z", ".bat", ".cmd", ".ps1", ".vbs", ".msi", ".scr", ".ahk", ".lua", ".disabled", ".sys", ".class"
+        };
+
+        Control BuildFind()
+        {
+            FlowLayoutPanel tb, op;
+            TableLayoutPanel p = Page(sFind, "Мгновенный поиск любого файла по имени на всех дисках — и для каждого видно, откуда он взялся: сайт, ссылка, браузер, Telegram, архив, флешка", out tb, out op, true);
+            sFind.R.HideSearch();
+            qBox = new SearchBox("Имя файла: doomsday  ·  *.jar  ·  ext:exe,dll  ·  \\downloads\\ *.exe  ·  !исключить");
+            qBox.Size = new Size(Theme.Px(560), Theme.Px(38)); qBox.Margin = new Padding(0, 0, Theme.Px(10), 0);
+            tb.Controls.Add(qBox);
+            FlatButton bIdx = Btn(tb, "Обновить индекс", false, Theme.IcDrive);
+            sFind.Stop = Btn(tb, "Стоп", false, Theme.IcStop, true); sFind.Stop.Enabled = false;
+            sFind.Stop.Click += delegate { StopAll(); if (findCts != null) findCts.Cancel(); };
+            sFind.Report = Btn(tb, "Отчёт", false, Theme.IcSave);
+            sFind.Report.Click += delegate { Export(sFind); };
+            bIdx.Click += delegate { StartIndex(false); };
+            tProg = Pill(op, "Только программы, моды и архивы", false);
+            tDl = Pill(op, "Только скачанные из интернета", false);
+            tProg.Click += delegate { DoFind(); };
+            tDl.Click += delegate { DoFind(); };
+            findTimer = new System.Windows.Forms.Timer(); findTimer.Interval = 350;
+            findTimer.Tick += delegate { findTimer.Stop(); DoFind(); };
+            qBox.Box.TextChanged += delegate { if (index != null) { findTimer.Stop(); findTimer.Start(); } };
+            qBox.Box.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; findTimer.Stop(); DoFind(); } };
+            sFind.V.Set(VerdictBar.State.Idle, "Напиши имя файла и нажми Enter",
+                "Первый раз диски индексируются: " + (isAdmin ? "с правами администратора — через MFT, секунды." : "без прав администратора — обходом папок, до минуты.") + " Правый клик по файлу — разобрать или проверить.");
+            sFind.R.IdleSub = "Например: doomsday · autoclicker · *.jar · ext:exe,dll · \\Downloads\\";
+            return p;
+        }
+
+        void StartIndex(bool thenFind)
+        {
+            if (running != null) return;
+            List<string> roots = driveCards.Where(c => c.Checked).Select(c => c.Root).ToList();
+            if (roots.Count == 0) roots = driveCards.Select(c => c.Root).ToList();
+            building = new FileIndex();
+            FileIndex ix = building;
+            findAfterIndex = thenFind;
+            Run(sFind, "Индексирую " + string.Join(", ", roots.Select(r => r.TrimEnd('\\'))),
+                ct => { ix.Build(roots, ct); DownloadHistory.Reset(); try { int n = DownloadHistory.All.Count; } catch { } },
+                () => 1 - Math.Exp(-ix.Progress / 700000.0),
+                () => "в индексе " + ix.Progress.ToString("N0") + " · " + ix.Current,
+                () => "");
+        }
+
+        void EndIndex()
+        {
+            sw.Stop();
+            bool stopped = cts != null && cts.IsCancellationRequested;
+            running = null;
+            sFind.R.Running = false;
+            sFind.V.Progress = 1; sFind.V.ShowPercent = false;
+            if (!stopped && building != null && building.Count > 0) index = building;
+            building = null;
+            SetButtons();
+            if (index == null) { sFind.V.Set(VerdictBar.State.Info, "Индекс не построен", stopped ? "Остановлено." : "Не удалось прочитать диски."); return; }
+            sFind.V.Set(VerdictBar.State.Info, "Индекс готов: " + index.Files.ToString("N0") + " файлов, " + index.Dirs.ToString("N0") + " папок",
+                index.Method + " · " + FormatTime(sw.Elapsed) + " · загрузок в истории браузеров: " + DownloadHistory.All.Count);
+            if (fullRun) { BeginInvoke(new Action(RunNext)); return; }
+            if (findAfterIndex || qBox.Box.Text.Trim().Length > 0) DoFind();
+        }
+
+        void DoFind()
+        {
+            string text = qBox.Box.Text.Trim();
+            if (index == null) { if (text.Length > 0) StartIndex(true); return; }
+            if (running != null) return;
+            FileIndex.Query q = FileIndex.Parse(text);
+            if (q.Empty && !tDl.Checked) { sFind.R.Clear(); sFind.V.Set(VerdictBar.State.Info, "Индекс готов: " + index.Files.ToString("N0") + " файлов", "Напиши имя или маску файла."); return; }
+            if (q.Empty) q.Words.Add("");
+            if (tProg.Checked && q.Exts == null) q.Exts = progExts;
+            q.FilesOnly = tDl.Checked;
+            if (findCts != null) findCts.Cancel();
+            findCts = new CancellationTokenSource();
+            CancellationToken ct = findCts.Token;
+            bool onlyDl = tDl.Checked;
+            FileIndex ix = index;
+            sFind.R.Clear(); sFind.R.Running = true; sFind.R.RepaintEmpty();
+            sFind.V.Set(VerdictBar.State.Running, "Ищу «" + text + "»", "");
+            Stopwatch t = Stopwatch.StartNew();
+            Task.Factory.StartNew(() =>
+            {
+                int total, shownN = 0, crit = 0;
+                List<int> ids = ix.Search(q, onlyDl ? 60000 : 3000, null, out total, ct);
+                int dlCount = 0;
+                foreach (int id in ids)
+                {
+                    if (ct.IsCancellationRequested) return;
+                    string path = ix.PathOf(id);
+                    if (path == null) continue;
+                    Finding f = SearchFinding(ix, id, path, onlyDl);
+                    if (f == null) continue;
+                    dlCount++;
+                    if (f.Severity >= 2) crit++;
+                    sFind.R.Enqueue(f);
+                    if (++shownN >= 3000) break;
+                }
+                if (ct.IsCancellationRequested) return;
+                try
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        if (ct.IsCancellationRequested) return;
+                        sFind.R.Running = false; sFind.R.Scanned = true; sFind.R.Finish();
+                        string head = onlyDl ? "Скачанных файлов: " + dlCount + (ids.Count < total ? " (проверены первые " + ids.Count.ToString("N0") + " из " + total.ToString("N0") + ")" : "")
+                                             : "Найдено: " + total.ToString("N0") + (shownN < total ? " · показаны первые " + shownN.ToString("N0") : "");
+                        sFind.V.Set(crit > 0 ? VerdictBar.State.Warn : VerdictBar.State.Info, head + (crit > 0 ? " · с признаками чита: " + crit : ""),
+                            t.ElapsedMilliseconds + " мс · в индексе " + ix.Files.ToString("N0") + " файлов (" + ix.Built.ToString("HH:mm") + ") · колонка «Причина» — откуда взялся файл");
+                    }));
+                }
+                catch { }
+            });
+        }
+
+        static Finding SearchFinding(FileIndex ix, int id, string path, bool onlyDl)
+        {
+            Finding f = new Finding();
+            f.Path = path; f.FileName = Path.GetFileName(path.TrimEnd('\\')); f.Source = "Поиск файлов";
+            if (f.FileName.Length == 0) f.FileName = path;
+            if (ix.IsDir[id])
+            {
+                f.RealType = "Папка";
+                try { DirectoryInfo di = new DirectoryInfo(path); f.Modified = di.LastWriteTime; f.Created = di.CreationTime; } catch { }
+                f.Origin = Origin.Guess(path + "\\") ?? "Папка";
+                f.Note("Папка");
+                foreach (Keywords.Kw k in Keywords.Match(f.FileName).Where(k => k.Strong)) f.Add(40, "В названии папки слово из списка «" + k.Word + "»");
+                f.Finish();
+                return f;
+            }
+            string ext = Path.GetExtension(path).ToLowerInvariant(); f.Ext = ext;
+            try { FileInfo fi = new FileInfo(path); f.Size = fi.Length; f.Modified = fi.LastWriteTime; f.Created = fi.CreationTime; } catch { }
+            Origin.Explained e;
+            try { e = Origin.Explain(path); } catch { return onlyDl ? null : f; }
+            if (onlyDl && e.Mark == null && e.Dl == null) return null;
+            f.RealType = TypeName(ext) + " · " + (e.Domain ?? (e.Mark != null && e.Mark.App != null ? "из мессенджера" : e.Mark != null || e.Dl != null ? "скачан" : "локальный"));
+            f.Origin = e.Text;
+            f.Note(e.Short);
+            if (e.Site != null) f.Add(55, "Скачан с сайта читов: " + (e.Domain ?? e.Site) + " (в адресе «" + e.Site + "»)");
+            foreach (Keywords.Kw k in Keywords.Match(f.FileName))
+            {
+                if (k.Strong) f.Add(40, "Имя содержит слово из списка «" + k.Word + "»");
+                else f.Note("Имя содержит частое слово из списка «" + k.Word + "»");
+            }
+            f.Finish();
+            return f;
+        }
+
+        static string TypeName(string ext)
+        {
+            switch (ext)
+            {
+                case ".exe": return "EXE";
+                case ".dll": return "DLL";
+                case ".jar": return "JAR";
+                case ".sys": return "SYS";
+                case ".zip": case ".rar": case ".7z": return "ZIP";
+                case ".class": return "CLS";
+                default: return ext.Length > 1 && ext.Length <= 5 ? ext.Substring(1).ToUpperInvariant() : "—";
+            }
+        }
+
+        // ======================= Разбор файла =======================
+        void HookInspect(ResultsView r)
+        {
+            r.InspectRequested += f => Inspect(f.Path);
+            r.AnalyzeRequested += f =>
+            {
+                if (!File.Exists(f.Path) && !Directory.Exists(f.Path)) { MessageBox.Show(this, "Файла уже нет на диске.", AppName); return; }
+                Show(sMods); StartMods(new List<string> { f.Path });
+            };
+        }
+
+        void Inspect(string path)
+        {
+            if (string.IsNullOrEmpty(path) || !File.Exists(path)) { MessageBox.Show(this, "Разобрать можно только существующий файл:\n" + path, AppName); return; }
+            Show(sDec);
+            dec.Open(path);
         }
 
         // ======================= Инструменты =======================
@@ -536,7 +759,7 @@ namespace InjectHunter
             p.RowStyles.Add(new RowStyle(SizeType.Absolute, Theme.Px(60)));
             p.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             p.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            PageTitle pt = new PageTitle("Инструменты", "Программы для проверки, встроенные в RamCheaker. Открываются из временной папки, с теми же правами."); pt.Dock = DockStyle.Fill;
+            PageTitle pt = new PageTitle("Инструменты", "Программы для проверки, встроенные в " + AppName + ". Открываются из временной папки, с теми же правами."); pt.Dock = DockStyle.Fill;
             p.Controls.Add(pt, 0, 0);
             FlowLayoutPanel tb = Flow(new Padding(0, 0, 0, Theme.Px(12)));
             FlatButton bOpen = Btn(tb, "Открыть папку инструментов", false, Theme.IcFolder);
@@ -648,6 +871,7 @@ namespace InjectHunter
         void End(Sec s)
         {
             ResultsView r = s.R;
+            if (s == sFind) { EndIndex(); return; }
             r.Running = false; r.Scanned = true;
             r.Finish();
             sw.Stop();
@@ -682,7 +906,7 @@ namespace InjectHunter
             swAll.Restart();
             chain.Enqueue(StartTraces);
             chain.Enqueue(StartOpen);
-            chain.Enqueue(StartLegit);
+            chain.Enqueue(StartBypass);
             chain.Enqueue(() => StartMods(null));
             chain.Enqueue(StartMem);
             chain.Enqueue(() => StartHidden(null));
@@ -705,7 +929,7 @@ namespace InjectHunter
         {
             swAll.Stop();
             vAll.ShowPercent = false; vAll.Progress = 1;
-            Sec[] list = { sHidden, sOpen, sMem, sTraces, sLegit, sMods };
+            Sec[] list = { sHidden, sOpen, sMem, sTraces, sBypass, sMods };
             int crit = list.Sum(s => s.R.Crit), susp = list.Sum(s => s.R.Susp), warn = list.Sum(s => s.R.Warn);
             string sub = "Всего: критичных " + crit + ", подозрительных " + susp + ", слабых " + warn + " · " + FormatTime(swAll.Elapsed);
             string pre = stopped ? "Остановлено · " : "";
@@ -774,7 +998,7 @@ namespace InjectHunter
             if (s.R.All.Count == 0) { s.V.Set(s.V.Mode == VerdictBar.State.Running ? s.V.Mode : VerdictBar.State.Info, "Отчёт пуст", "Сначала запусти проверку."); return; }
             SaveFileDialog d = new SaveFileDialog();
             d.Filter = "Текстовый отчёт (*.txt)|*.txt";
-            d.FileName = "RamCheaker_" + DateTime.Now.ToString("yyyyMMdd_HHmm") + ".txt";
+            d.FileName = "RamixyCheaker_" + DateTime.Now.ToString("yyyyMMdd_HHmm") + ".txt";
             if (d.ShowDialog(this) != DialogResult.OK) return;
             StringBuilder sb = new StringBuilder();
             sb.AppendLine(AppName + " " + Version + " — отчёт");
@@ -800,7 +1024,7 @@ namespace InjectHunter
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.ThreadException += (s, e) => MessageBox.Show(e.Exception.ToString(), "RamCheaker — ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            Application.ThreadException += (s, e) => MessageBox.Show(e.Exception.ToString(), "RamixyCheaker — ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
             Analyzer.Init();
             Tools.Load();
             string arg = null;

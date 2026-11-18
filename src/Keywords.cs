@@ -39,9 +39,11 @@ namespace InjectHunter
         {
             try
             {
-                string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RamCheaker");
+                string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RamixyCheaker");
                 UserFile = Path.Combine(dir, "keywords.txt");
+                string old = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RamCheaker", "keywords.txt");
                 if (File.Exists(UserFile)) CurrentText = File.ReadAllText(UserFile, Encoding.UTF8);
+                else if (File.Exists(old)) CurrentText = File.ReadAllText(old, Encoding.UTF8);
             }
             catch { }
             Parse(CurrentText);
@@ -126,7 +128,7 @@ namespace InjectHunter
 
         // Сами SS-утилиты и античит-сканеры: их имена содержат названия читов, но это не читы
         static readonly string[] ssTools = { "fucker", "ramcheaker", "injecthunter", "bamparser", "journaltrace", "pathsparser", "redlotus",
-            "echo-", "paladin", "avenge", "ocean ss", "sschecker", "ss-tool", "sstool", "screenshare", "anticheat", "detector" };
+            "echo-", "paladin", "avenge", "ocean ss", "sschecker", "ss-tool", "sstool", "screenshare", "anticheat", "detector", "detect", "checker", "ramixycheaker", "meowtonynoh", "tonynoh" };
 
         public static bool IsSsTool(string text)
         {
@@ -161,7 +163,7 @@ namespace InjectHunter
             catch { }
             try
             {
-                string user = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RamCheaker", "sizes.txt");
+                string user = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RamixyCheaker", "sizes.txt");
                 if (File.Exists(user)) text = (text ?? "") + "\n" + File.ReadAllText(user);
             }
             catch { }

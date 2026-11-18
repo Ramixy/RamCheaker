@@ -501,7 +501,7 @@ namespace InjectHunter
     class DetailsView : Panel
     {
         Finding f;
-        public IconButton bFolder, bCopy, bHash, bVt;
+        public IconButton bFolder, bCopy, bHash, bVt, bCode;
         int contentH;
         public string EmptyText = "Выбери строку, чтобы увидеть причины.";
 
@@ -513,7 +513,8 @@ namespace InjectHunter
             bCopy = new IconButton(Theme.IcCopy, "Путь");
             bHash = new IconButton(Theme.IcHash, "SHA-256");
             bVt = new IconButton(Theme.IcGlobe, "VirusTotal");
-            foreach (IconButton b in new IconButton[] { bFolder, bCopy, bHash, bVt }) { b.Visible = false; b.BackColor = Theme.Card; Controls.Add(b); }
+            bCode = new IconButton("", "Разобрать");
+            foreach (IconButton b in new IconButton[] { bFolder, bCopy, bHash, bVt, bCode }) { b.Visible = false; b.BackColor = Theme.Card; Controls.Add(b); }
             HandleCreated += delegate { Native.SetWindowTheme(Handle, "DarkMode_Explorer", null); };
         }
 
@@ -534,7 +535,7 @@ namespace InjectHunter
             int pad = Theme.Px(16);
             int x = Width - pad - (AutoScrollMinSize.Height > Height ? SystemInformation.VerticalScrollBarWidth : 0);
             Point off = AutoScrollPosition;
-            foreach (IconButton b in new IconButton[] { bVt, bHash, bCopy, bFolder })
+            foreach (IconButton b in new IconButton[] { bVt, bHash, bCopy, bFolder, bCode })
             {
                 x -= b.Width;
                 b.Location = new Point(x, pad + off.Y);
@@ -567,7 +568,7 @@ namespace InjectHunter
         {
             Color sc = Theme.Sev(f.Severity);
             int y = pad;
-            int buttonsW = bFolder.Width + bCopy.Width + bHash.Width + bVt.Width + Theme.Px(30);
+            int buttonsW = bFolder.Width + bCopy.Width + bHash.Width + bVt.Width + bCode.Width + Theme.Px(36);
             using (SolidBrush b = new SolidBrush(sc)) g.FillEllipse(b, pad, y + Theme.Px(9), Theme.Px(8), Theme.Px(8));
             using (Font sf = Theme.Semi(8f))
                 TextRenderer.DrawText(g, Finding.SevName(f.Severity), sf, new Point(pad + Theme.Px(14), y + Theme.Px(6)), sc, TextFormatFlags.NoPadding);
@@ -625,6 +626,17 @@ namespace InjectHunter
                 TextRenderer.DrawText(g, "SHA-256", hf, new Point(pad, y + 2), Theme.Dim, TextFormatFlags.NoPadding);
             using (Font mono = Theme.Mono(8.5f))
                 TextRenderer.DrawText(g, f.Sha256 ?? "считаю…", mono, new Point(pad + Theme.Px(60), y), Theme.Muted, TextFormatFlags.NoPadding);
+            y += Theme.Px(24);
+            using (Font hf = Theme.Font(7.5f))
+                TextRenderer.DrawText(g, "ОТКУДА", hf, new Point(pad, y + 2), Theme.Dim, TextFormatFlags.NoPadding);
+            using (Font of = Theme.Font(9f))
+            {
+                string ot = f.Origin ?? "ищу метку скачивания…";
+                int ow = w - Theme.Px(60);
+                Size os = TextRenderer.MeasureText(g, ot, of, new Size(ow, 2000), TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
+                TextRenderer.DrawText(g, ot, of, new Rectangle(pad + Theme.Px(60), y, ow, os.Height + 2), Theme.Muted, TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
+                y += os.Height;
+            }
             return y + Theme.Px(20);
         }
 

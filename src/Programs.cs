@@ -321,7 +321,40 @@ namespace InjectHunter
                 }
                 if (Regex.IsMatch(cmd, @"-Xbootclasspath/[ap]:", RegexOptions.IgnoreCase))
                     Emit(Add(p, "javaw запущен с -Xbootclasspath — подмена системных классов Java", 35, null));
+                foreach (JvmFlag jf in JvmFlags(cmd)) if (jf.Pts > 0) Emit(Add(p, jf.Text, jf.Pts, jf.File));
             }
+        }
+
+        public class JvmFlag { public string Arg, Text, File; public int Pts; }
+
+        /// <summary>Подозрительные аргументы запуска Java (идея из JVM-Inspector): дополнительные моды, подмена jar игры, attach к себе.</summary>
+        public static List<JvmFlag> JvmFlags(string cmd)
+        {
+            List<JvmFlag> res = new List<JvmFlag>();
+            if (string.IsNullOrEmpty(cmd)) return res;
+            foreach (Match m in Regex.Matches(cmd, @"(?:^|\s)(""?)(-D(?:fabric|loader)\.(addMods|gameJarPath)|-Djdk\.attach\.allowAttachSelf|-Djava\.library\.path|-Djna\.boot\.library\.path|--tweakClass)[=:\s]+(""[^""]*""|\S+)", RegexOptions.IgnoreCase))
+            {
+                string key = m.Groups[2].Value, val = m.Groups[4].Value.Trim('"');
+                string lk = key.ToLowerInvariant(), lv = val.ToLowerInvariant();
+                JvmFlag f = new JvmFlag(); f.Arg = key + "=" + val;
+                if (lk.EndsWith("addmods")) { f.Pts = 45; f.File = val.Split(';')[0]; f.Text = "Minecraft запущен с " + key + " — подгружаются моды не из папки mods: " + val; }
+                else if (lk.EndsWith("gamejarpath")) { f.Pts = 35; f.File = val; f.Text = "Подменён jar самой игры (" + key + "): " + val; }
+                else if (lk.Contains("allowattachself")) { if (lv.StartsWith("true")) { f.Pts = 45; f.Text = "Разрешено подключаться к JVM изнутри (-Djdk.attach.allowAttachSelf=true) — так работают инжект-клиенты"; } }
+                else if (lk.Contains("library.path"))
+                {
+                    bool odd = (lv.Contains("\\temp\\") || lv.Contains("\\downloads\\") || lv.Contains("\\desktop\\")) && !lv.Contains("natives");
+                    f.Pts = odd ? 25 : 0; f.Text = "Нативные библиотеки Java грузятся из необычной папки: " + val;
+                }
+                else if (lk == "--tweakclass")
+                {
+                    bool known = Regex.IsMatch(lv, "optifine|forge|fml|liteloader|mixin|launchwrapper|labymod|essential");
+                    f.Pts = known ? 0 : 25; f.Text = "Неизвестный tweakClass: " + val + " — через него может грузиться чит";
+                }
+                else continue;
+                if (f.Text == null) f.Text = key + " = " + val;
+                res.Add(f);
+            }
+            return res;
         }
 
         Finding Add(SysInfo.Proc p, string reason, int w, string file)

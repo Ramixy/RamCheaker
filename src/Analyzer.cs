@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -23,6 +23,7 @@ namespace InjectHunter
         public string Source = "Диск";
         public SigInfo Sig;
         public string Sha256;
+        public string Origin;
         public List<string> Reasons = new List<string>();
         public bool ManySigs;
 
@@ -56,6 +57,7 @@ namespace InjectHunter
 
         public void Finish()
         {
+            try { InjectHunter.Origin.Apply(this); } catch { }
             if (Score < 0) Score = 0;
             Severity = Score >= 60 ? 3 : Score >= 30 ? 2 : Score >= 15 ? 1 : 0;
         }
@@ -369,6 +371,12 @@ namespace InjectHunter
                     f.RealType = pe.Describe();
                     if (pe.Valid)
                     {
+                        int beforeTraits = f.Score;
+                        PeClass.Traits(f, pe, path, inWindows);
+                        if (f.Score > beforeTraits) needSig = true;
+                    }
+                    if (pe.Valid)
+                    {
                         if (isDllExt && !pe.IsDll && pe.Subsystem != 1)
                             f.Add(60, "Это EXE, а не DLL: у файла .dll нет флага IMAGE_FILE_DLL (запускаемая программа под видом библиотеки)");
                         if (isExeExt && pe.IsDll)
@@ -480,6 +488,12 @@ namespace InjectHunter
                         {
                             f.Add(mc ? 18 : 8, "Сильная обфускация имён классов (" + ji.ShortNames + " из " + ji.Classes + ")");
                         }
+                        if (ji.Wide.Count > 0)
+                        {
+                            List<string> cheatWide = ji.Wide.Where(w => { string n = w.Replace(" ", "").ToLowerInvariant(); return Signatures.All.Any(sg => sg.Kind == SigKind.CheatModule && sg.Token.Replace(" ", "") == n); }).ToList();
+                            if (cheatWide.Count > 0) f.Add(45, "Названия модулей чита записаны «широкими» буквами, чтобы их не нашёл поиск: " + string.Join(", ", cheatWide.Take(6)));
+                            else f.Note("Есть строки из «широких» букв: " + string.Join(", ", ji.Wide.Take(5)));
+                        }
                         if (ji.NestedJars > 0) f.Note("Вложенных JAR: " + ji.NestedJars);
                         if (ji.Loader != null) f.Note("Загрузчик: " + ji.Loader);
                     }
@@ -533,6 +547,8 @@ namespace InjectHunter
             if (isPe && (f.Score > 0 || needSig || keepClean))
             {
                 f.Sig = Native.CheckSignature(path);
+                string lbl0 = PeClass.Label(path, f.Sig);
+                if (lbl0 != null) f.RealType += " · " + lbl0;
                 if (f.Sig.Trusted)
                 {
                     signedOk = true;
@@ -543,6 +559,7 @@ namespace InjectHunter
                 }
                 else
                 {
+                    PeClass.VersionTraits(f, path, inWindows);
                     if (f.Sig.State == SigState.Invalid) f.Add(25, "Цифровая подпись недействительна — файл изменён после подписания");
                     if (sysName) f.Add(22, "Имя совпадает с системной библиотекой Windows («" + fi.Name + "»), но файл лежит вне Windows и НЕ подписан");
                     bool oldMs = false;
@@ -613,6 +630,27 @@ namespace InjectHunter
             public string Agent, ModName, Loader;
             public bool Broken, TemplateHit;
             public bool HasLpng, HasMcmod;
+            public HashSet<string> Wide = new HashSet<string>();
+        }
+
+        /// <summary>Строки из «широких» символов (Ａｕｔｏ Ｃｒｙｓｔａｌ) — так прячут названия модулей чита от поиска (идея из MeowModAnalyzer).</summary>
+        static void CollectWide(byte[] b, int len, HashSet<string> res)
+        {
+            if (res.Count > 50) return;
+            StringBuilder sb = new StringBuilder(); int letters = 0;
+            for (int i = 0; i + 2 < len; )
+            {
+                char c = '\0';
+                if (b[i] == 0xEF && b[i + 1] == 0xBC && b[i + 2] >= 0xA1 && b[i + 2] <= 0xBA) c = (char)('A' + b[i + 2] - 0xA1);
+                else if (b[i] == 0xEF && b[i + 1] == 0xBD && b[i + 2] >= 0x81 && b[i + 2] <= 0x9A) c = (char)('a' + b[i + 2] - 0x81);
+                else if (b[i] == 0xEF && b[i + 1] == 0xBC && b[i + 2] >= 0x90 && b[i + 2] <= 0x99) c = (char)('0' + b[i + 2] - 0x90);
+                else if (b[i] == 0xE3 && b[i + 1] == 0x80 && b[i + 2] == 0x80 && letters > 0) c = ' ';
+                else if (b[i] == 0x20 && letters > 0) c = ' ';
+                if (c != '\0') { sb.Append(c); if (c != ' ') letters++; i += c == ' ' && b[i] == 0x20 ? 1 : 3; continue; }
+                if (letters >= 3) res.Add(sb.ToString().Trim());
+                sb.Length = 0; letters = 0; i++;
+            }
+            if (letters >= 3) res.Add(sb.ToString().Trim());
         }
 
         static readonly Regex rxName = new Regex("\"name\"\\s*:\\s*\"([^\"]{1,80})\"", RegexOptions.Compiled);
@@ -647,6 +685,7 @@ namespace InjectHunter
                             budget -= len;
                             int a = 0, b = 0;
                             ScanChunk(buf, len, counts, ref a, ref b);
+                            CollectWide(buf, len, ji.Wide);
                         }
                     }
                 }
