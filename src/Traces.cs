@@ -29,6 +29,8 @@ namespace InjectHunter
             steps.Add(Step("Недавние файлы", Recent));
             steps.Add(Step("Загрузки и рабочий стол", Downloads));
             steps.Add(Step("Папки лаунчеров Minecraft", Launchers));
+            steps.Add(Step("История браузеров — сайты читов", BrowserHistory));
+            steps.Add(Step("DNS-кэш — сайты читов", Dns));
             if (useNirsoft)
                 foreach (ToolInfo t in Tools.All.Where(x => x.NirArgs != null))
                 {
@@ -102,6 +104,46 @@ namespace InjectHunter
         }
 
         // ---------- источники ----------
+        void Site(string source, string url, string host, string word, int pts, string what)
+        {
+            Entries++;
+            if (!reported.Add(source + "|" + host)) return;
+            Finding f = new Finding();
+            f.Path = url; f.FileName = host; f.RealType = "WEB · " + source; f.Source = source;
+            f.Origin = "Сайт: " + host;
+            f.Add(pts, what + " (в адресе «" + word + "»)");
+            if (url != host) f.Note("Адрес: " + (url.Length > 300 ? url.Substring(0, 300) + "…" : url));
+            f.Finish();
+            if (f.Severity > 0 && Found != null) Found(f);
+        }
+
+        void BrowserHistory()
+        {
+            foreach (KeyValuePair<string, string> h in WebTraces.HistoryFiles())
+            {
+                Current = "История " + h.Key + ": " + h.Value;
+                foreach (string u in WebTraces.Urls(h.Value))
+                {
+                    Entries++;
+                    string w = Origin.CheatSite(u);
+                    if (w == null) continue;
+                    string host = Origin.HostOf(u) ?? u;
+                    bool dl = System.Text.RegularExpressions.Regex.IsMatch(u, @"\.(exe|jar|zip|rar|7z|dll|msi)(\?|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    Site("История " + h.Key, u, host, w, dl ? 60 : 45, dl ? "С сайта читов скачивали файл" : "Заходили на сайт читов " + host);
+                }
+            }
+        }
+
+        void Dns()
+        {
+            foreach (string d in WebTraces.DnsCache())
+            {
+                Entries++;
+                string w = Origin.CheatSite(d);
+                if (w != null) Site("DNS-кэш", d, d, w, 50, "ПК недавно обращался к сайту читов " + d + " — чит мог проверять лицензию или обновляться");
+            }
+        }
+
         void Prefetch()
         {
             string dir = Path.Combine(Analyzer.WinDir, "Prefetch");

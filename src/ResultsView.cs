@@ -6,6 +6,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -64,6 +65,7 @@ namespace InjectHunter
             details.bCopy.Click += delegate { Finding f = details.Current; if (f != null) Clipboard.SetText(f.Path); };
             details.bHash.Click += delegate { Finding f = details.Current; if (f != null && f.Sha256 != null && f.Sha256.Length == 64) Clipboard.SetText(f.Sha256); };
             details.bVt.Click += delegate { OpenVt(details.Current); };
+            details.bCode.Click += delegate { Finding f = details.Current; if (f != null && InspectRequested != null) InspectRequested(f); };
             dp.Controls.Add(details);
             Controls.Add(dp, 0, 2);
             if (compact) { RowStyles[2].Height = 0; dp.Visible = false; }
@@ -137,6 +139,9 @@ namespace InjectHunter
             cm.Items.Add("Копировать путь", null, delegate { Finding f = Selected(); if (f != null) Clipboard.SetText(f.Path); });
             cm.Items.Add("Копировать SHA-256", null, delegate { Finding f = Selected(); if (f != null && f.Sha256 != null && f.Sha256.Length == 64) Clipboard.SetText(f.Sha256); });
             cm.Items.Add("Копировать отчёт по строке", null, delegate { Finding f = Selected(); if (f != null) Clipboard.SetText(FindingText(f)); });
+            cm.Items.Add(new ToolStripSeparator());
+            cm.Items.Add("Разобрать в декомпиляторе", null, delegate { Finding f = Selected(); if (f != null && InspectRequested != null) InspectRequested(f); });
+            cm.Items.Add("Проверить файл на читы", null, delegate { Finding f = Selected(); if (f != null && AnalyzeRequested != null) AnalyzeRequested(f); });
             cm.Items.Add(new ToolStripSeparator());
             cm.Items.Add("Открыть хэш в VirusTotal", null, delegate { OpenVt(Selected()); });
             foreach (ToolStripItem it in cm.Items) it.ForeColor = Theme.Text;
@@ -245,6 +250,8 @@ namespace InjectHunter
         // ---------- данные ----------
         public void Enqueue(Finding f) { pending.Enqueue(f); }
         public event Action<Finding> Added;
+        public event Action<Finding> InspectRequested, AnalyzeRequested;
+        public void HideSearch() { search.Visible = false; }
 
         public void Clear()
         {
@@ -324,6 +331,31 @@ namespace InjectHunter
         void ShowDetails(Finding f)
         {
             details.Display(f);
+            if (f != null && f.Origin == null && f.Path.Length > 3 && f.Path[1] == ':')
+            {
+                Task.Factory.StartNew(() =>
+                {
+                    string o;
+                    try { o = File.Exists(f.Path) ? Origin.Explain(f.Path).Text : "файла нет на диске"; } catch { o = "не удалось прочитать"; }
+                    f.Origin = o;
+                    try { BeginInvoke(new Action(() => { if (details.Current == f) details.Invalidate(); })); } catch { }
+                });
+            }
+            if (f != null && f.Sig == null && f.Path.Length > 3 && f.Path[1] == ':' && Regex.IsMatch(f.Path, @"\.(exe|dll|sys|scr|cpl|ocx)$", RegexOptions.IgnoreCase))
+            {
+                Task.Factory.StartNew(() =>
+                {
+                    try
+                    {
+                        SigInfo sig = Native.CheckSignature(f.Path);
+                        string lbl = PeClass.Label(f.Path, sig);
+                        f.Sig = sig;
+                        if (lbl != null && f.RealType.IndexOf(lbl, StringComparison.Ordinal) < 0) f.RealType += " · " + lbl;
+                    }
+                    catch { }
+                    try { BeginInvoke(new Action(() => { if (details.Current == f) details.Invalidate(); grid.Invalidate(); })); } catch { }
+                });
+            }
             if (f != null && f.Sha256 == null && f.Path.Length > 3 && f.Path[1] == ':' && File.Exists(f.Path))
             {
                 Task.Factory.StartNew(() =>
@@ -366,6 +398,7 @@ namespace InjectHunter
             else if (f.Modified.Year > 1990) sb.AppendLine("    Время: " + f.Modified.ToString("dd.MM.yyyy HH:mm:ss"));
             if (f.Sig != null) sb.AppendLine("    Подпись: " + f.Sig);
             if (f.Sha256 != null) sb.AppendLine("    SHA-256: " + f.Sha256);
+            if (f.Origin != null) sb.AppendLine("    Откуда: " + f.Origin.Replace("\n", " | "));
             foreach (string r in f.Reasons) sb.AppendLine("      " + r);
             return sb.ToString();
         }

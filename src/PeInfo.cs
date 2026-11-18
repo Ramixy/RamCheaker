@@ -1,6 +1,7 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 
 namespace InjectHunter
@@ -187,6 +188,79 @@ namespace InjectHunter
                 string n = CStr(BitConverter.ToUInt32(arr, i), 256);
                 if (!string.IsNullOrEmpty(n)) Exports.Add(n);
             }
+        }
+    }
+
+    /// <summary>Чем PE-файл отличается от системного: подпись, папка, версия, импорт, упаковщики.</summary>
+    static class PeClass
+    {
+        static readonly HashSet<string> sysProcs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+            "svchost.exe", "csrss.exe", "lsass.exe", "winlogon.exe", "smss.exe", "services.exe", "wininit.exe", "explorer.exe", "conhost.exe",
+            "dwm.exe", "runtimebroker.exe", "taskhostw.exe", "spoolsv.exe", "sihost.exe", "fontdrvhost.exe", "dllhost.exe", "rundll32.exe",
+            "taskmgr.exe", "audiodg.exe", "ctfmon.exe", "searchindexer.exe", "wuauclt.exe", "lsm.exe", "system.exe", "smartscreen.exe"
+        };
+
+        /// <summary>Короткая метка: системный / Microsoft / чужая подпись / без подписи.</summary>
+        public static string Label(string path, SigInfo sig)
+        {
+            if (sig == null) return null;
+            bool inWin = Analyzer.WinDir != null && path.StartsWith(Analyzer.WinDir + "\\", StringComparison.OrdinalIgnoreCase);
+            if (sig.Trusted && sig.IsMicrosoft) return inWin ? "системный файл Windows" : "Microsoft";
+            if (sig.Trusted) return "подпись: " + (sig.Signer ?? "есть");
+            if (sig.State == SigState.Invalid) return "подпись недействительна";
+            return inWin ? "БЕЗ подписи в папке Windows" : "без подписи — сторонняя программа";
+        }
+
+        /// <summary>Признаки, которые есть у читов/инжекторов и почти никогда — у системных файлов. Баллы ставятся только неподписанным.</summary>
+        public static void Traits(Finding f, PeInfo pe, string path, bool inWindows)
+        {
+            if (pe == null || !pe.Valid) return;
+            HashSet<string> im = pe.ImportFuncs;
+            bool alloc = im.Contains("VirtualAllocEx") || im.Contains("NtAllocateVirtualMemory");
+            bool write = im.Contains("WriteProcessMemory") || im.Contains("NtWriteVirtualMemory");
+            bool thread = im.Contains("CreateRemoteThread") || im.Contains("CreateRemoteThreadEx") || im.Contains("NtCreateThreadEx") || im.Contains("RtlCreateUserThread") || im.Contains("QueueUserAPC");
+            if (alloc && write && thread) f.Add(20, "Умеет внедрять код в чужой процесс (VirtualAllocEx + WriteProcessMemory + удалённый поток) — так работают инжекторы");
+            else if (write && (im.Contains("OpenProcess") || alloc) && (im.Contains("ReadProcessMemory"))) f.Note("Читает и пишет память других процессов");
+            bool click = im.Contains("SendInput") || im.Contains("mouse_event");
+            bool keys = im.Contains("GetAsyncKeyState") || im.Contains("SetWindowsHookExA") || im.Contains("SetWindowsHookExW") || im.Contains("RegisterHotKey");
+            if (click && keys) f.Add(12, "Нажимает кнопки мыши программно и следит за клавишами — так устроены автокликеры");
+            foreach (string s in pe.SectionNames)
+            {
+                string l = s.ToLowerInvariant();
+                if (l.StartsWith(".vmp")) { f.Add(12, "Защищён VMProtect (секция " + s + ") — так прячут код читов и лоадеров"); break; }
+                if (l == ".themida" || l == ".winlice") { f.Add(12, "Защищён Themida/WinLicense (секция " + s + ")"); break; }
+                if (l.StartsWith(".enigma")) { f.Add(10, "Защищён Enigma Protector (секция " + s + ")"); break; }
+                if (l == "upx0" || l == "upx1") { f.Add(6, "Сжат упаковщиком UPX"); break; }
+                if (l == ".mpress1" || l == ".aspack" || l == ".petite" || l == ".nsp0") { f.Add(8, "Сжат упаковщиком (секция " + s + ")"); break; }
+            }
+            string name = System.IO.Path.GetFileName(path);
+            if (!inWindows && sysProcs.Contains(name))
+                f.Add(45, "Называется как системный процесс Windows («" + name + "»), но лежит не в папке Windows — так маскируют читы в диспетчере задач");
+            if (pe.TimeStamp > 0)
+            {
+                DateTime t = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(pe.TimeStamp);
+                if (t > DateTime.UtcNow.AddDays(2) && t.Year < 2100) f.Note("Дата сборки в будущем (" + t.ToString("dd.MM.yyyy") + ") — подделана");
+                else if (t > DateTime.UtcNow.AddDays(-30) && t <= DateTime.UtcNow.AddDays(2)) f.Note("Собран недавно: " + t.ToLocalTime().ToString("dd.MM.yyyy HH:mm"));
+            }
+        }
+
+        /// <summary>Сведения о версии: пустые или выдающие себя за Microsoft.</summary>
+        public static void VersionTraits(Finding f, string path, bool inWindows)
+        {
+            try
+            {
+                System.Diagnostics.FileVersionInfo vi = System.Diagnostics.FileVersionInfo.GetVersionInfo(path);
+                string comp = (vi.CompanyName ?? "").Trim(), prod = (vi.ProductName ?? "").Trim(), orig = (vi.OriginalFilename ?? "").Trim();
+                if (comp.IndexOf("Microsoft", StringComparison.OrdinalIgnoreCase) >= 0 && !inWindows)
+                    f.Add(30, "В сведениях о файле написано «" + comp + "», но подписи Microsoft нет — выдаёт себя за файл Windows");
+                if (comp.Length == 0 && prod.Length == 0 && (vi.FileDescription ?? "").Trim().Length == 0)
+                    f.Note("Нет сведений о версии (компания, продукт, описание) — у системных и обычных программ они есть");
+                else f.Note("О файле: " + string.Join(" · ", new string[] { comp, prod, (vi.FileDescription ?? "").Trim(), vi.FileVersion }.Where(x => !string.IsNullOrEmpty(x)).Distinct().ToArray()));
+                string ob = System.IO.Path.GetFileNameWithoutExtension(orig.Replace(".mui", "")), fb = System.IO.Path.GetFileNameWithoutExtension(path);
+                if (ob.Length > 0 && !ob.Equals(fb, StringComparison.OrdinalIgnoreCase) && !System.Text.RegularExpressions.Regex.IsMatch(fb, @"^" + System.Text.RegularExpressions.Regex.Escape(ob) + @"[\s_-]*(\(\d+\)|v?[\d.]+)?$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                    f.Note("Исходное имя файла: «" + orig + "» — файл переименован");
+            }
+            catch { }
         }
     }
 

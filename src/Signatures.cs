@@ -141,6 +141,37 @@ namespace InjectHunter
             P("Sigma", "info/sigmaclient");
             P("Tenacity", "dev/tenacity");
 
+            // ---- из MeowModAnalyzer / MeowClientFucker ----
+            P("Chainlibs (чит-клиент)", "org/chainlibs/module/impl/modules");
+            P("Krypton", "dev/krypton");
+            P("Virel", "dev/virel");
+            P("Gamble Client", "dev/gambleclient");
+            P("Greaj", "xyz/greaj");
+            E("Обфускатор Skidfuscator", 15, "dev/skidfuscator", "skidfuscator.dev");
+            E("Обфускатор Paramorphism", 15, "dev/paramorphism", "paramorphism-");
+            E("Обфускатор Radon", 15, "me/itzsomebody/radon", "radon obfuscator");
+            E("Обфускатор Caesium", 15, "dev/sim0n/caesium", "caesium obfuscator");
+            E("Обфускатор Bozar", 15, "vimasig/bozar", "bozar obfuscator");
+            E("Обфускатор Branchlock", 15, "branchlock.dev");
+            E("Обфускатор Binscure", 15, "com/binscure");
+            E("Обфускатор superblaubeere", 15, "superblaubeere27");
+            E("Обфускатор QProtect", 15, "mdma.dev/qprotect");
+            E("Обфускатор Zelix", 10, "zelixklassmaster", "com/zelix");
+            E("Глобальный перехват клавиш (кликеры)", 20, "jnativehook", "com/github/kwhat/jnativehook");
+            E("Отладочный доступ ко всем модулям JVM", 25, "jdwp.virtualmachine.allmodules");
+            M("AutoHitCrystal", "autohitcrystal", "auto hit crystal");
+            M("DoubleAnchor", "doubleanchor", "double anchor", "safeanchor", "safe anchor", "airanchor");
+            M("InventoryTotem", "inventorytotem", "inventory totem", "legittotem");
+            M("AutoDoubleHand", "autodoublehand", "auto double hand");
+            M("ShieldBreaker", "shieldbreaker", "shielddisabler", "shield disabler");
+            M("WalksyOptimizer", "walksyoptimizer", "walskyoptimizer", "walksycrystaloptimizermod");
+            M("MaceSwap", "maceswap", "mace swap", "automace", "stunslam", "stun slam");
+            M("AxeSpam", "axespam", "axe spam");
+            M("WebMacro", "webmacro", "web macro", "autoweb");
+            M("PingSpoof", "pingspoof", "ping spoof", "fakelag", "fake lag");
+            M("AutoPot", "autopot", "auto pot", "autopotrefill");
+            M("FakePunch", "fakepunch", "fake punch");
+            M("SelfDestruct", "selfdestruct", "self destruct");
             // ---- Модули читов (generic) ----
             M("KillAura", "killaura", "kill aura");
             M("CrystalAura", "crystalaura", "crystal aura");
