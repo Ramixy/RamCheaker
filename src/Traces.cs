@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -10,7 +10,7 @@ namespace InjectHunter
 {
     /// <summary>Следы запуска и скачивания: Prefetch, BAM, UserAssist, MuiCache, AppCompat, недавние файлы,
     /// загрузки, папки лаунчеров и выгрузка NirSoft-утилит. Всё сверяется со списком слов.</summary>
-    class TraceScanner
+    partial class TraceScanner
     {
         public event Action<Finding> Found;
         public volatile string Current = "";
@@ -31,6 +31,7 @@ namespace InjectHunter
             steps.Add(Step("Папки лаунчеров Minecraft", Launchers));
             steps.Add(Step("История браузеров — сайты читов", BrowserHistory));
             steps.Add(Step("DNS-кэш — сайты читов", Dns));
+            AddExtraSteps(steps);
             if (useNirsoft)
                 foreach (ToolInfo t in Tools.All.Where(x => x.NirArgs != null))
                 {
@@ -44,6 +45,7 @@ namespace InjectHunter
                 try { steps[i].Value(); Sources++; } catch { }
                 Progress = (i + 1.0) / steps.Count;
             }
+            if (!ct.IsCancellationRequested) { Current = "Запущенные программы: есть ли файл и подпись"; try { EmitExecuted(); } catch { } }
         }
 
         static KeyValuePair<string, Action> Step(string n, Action a) { return new KeyValuePair<string, Action>(n, a); }
@@ -53,7 +55,7 @@ namespace InjectHunter
         {
             Entries++;
             if (string.IsNullOrEmpty(text)) return;
-            List<Keywords.Kw> hits = Keywords.Match((badge == "MC" || badge == "DL") && !string.IsNullOrEmpty(shortName) ? shortName : text);
+            List<Keywords.Kw> hits = Keywords.Match(NameOnly.Contains(badge) && !string.IsNullOrEmpty(shortName) ? shortName : text);
             bool deletedExe = false;
             if (executed && text.Length > 3 && text[1] == ':' && text.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
             {
@@ -65,7 +67,12 @@ namespace InjectHunter
             string nameOnly = SafeName(string.IsNullOrEmpty(shortName) ? text : shortName).ToLowerInvariant();
             bool fileLike = nameOnly.EndsWith(".exe") || nameOnly.EndsWith(".jar") || nameOnly.EndsWith(".zip") || nameOnly.EndsWith(".rar") || badge == "PF";
             hits = hits.Where(k => k.Strong || (executed && fileLike)).ToList();
-            if (hits.Count == 0) return;
+            if (hits.Count == 0)
+            {
+                // как BAMParser / ExecutedProgramsList: каждая запущенная программа — есть ли файл, подписан ли он
+                if (executed && text.Length > 3 && text[1] == ':' && text.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) Executed(source, text, time);
+                return;
+            }
             // программа подтверждена системой (подписана) — не трогаем
             if (text.Length > 3 && text[1] == ':' && (text.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || text.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)))
             {
@@ -107,6 +114,14 @@ namespace InjectHunter
         void Site(string source, string url, string host, string word, int pts, string what)
         {
             Entries++;
+            if (Origin.IsNeutral(url))
+            {
+                // youtube.com/results?search_query=doomsday — искали или смотрели, а не заходили на сайт чита
+                bool search = url.IndexOf("search", StringComparison.OrdinalIgnoreCase) >= 0 || url.IndexOf("q=", StringComparison.OrdinalIgnoreCase) >= 0 || url.IndexOf("text=", StringComparison.OrdinalIgnoreCase) >= 0;
+                pts = 16;
+                what = (search ? "Искали «" + word + "» на " : "Открывали страницу про «" + word + "» на ") + host + " — проверь вручную, что именно";
+                host = host + " · " + word;
+            }
             if (!reported.Add(source + "|" + host)) return;
             Finding f = new Finding();
             f.Path = url; f.FileName = host; f.RealType = "WEB · " + source; f.Source = source;
@@ -261,6 +276,7 @@ namespace InjectHunter
             {
                 string n = Path.GetFileNameWithoutExtension(f);
                 Check("Недавние файлы", "LNK", n, n, File.GetLastWriteTime(f), false, "Ярлык: " + f);
+                foreach (string t in LnkTargets(f)) Check("Недавние файлы", "LNK", t, null, File.GetLastWriteTime(f), false, "Куда ведёт ярлык " + Path.GetFileName(f));
             }
         }
 

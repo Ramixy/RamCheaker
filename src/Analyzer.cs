@@ -291,7 +291,7 @@ namespace InjectHunter
             return counts;
         }
 
-        static string DescribeMagic(byte[] h, int n)
+        public static string DescribeMagic(byte[] h, int n)
         {
             if (n >= 4 && h[0] == 'P' && h[1] == 'K' && (h[2] == 3 || h[2] == 5 || h[2] == 7)) return "ZIP/JAR";
             if (n >= 8 && h[0] == 0xCA && h[1] == 0xFE && h[2] == 0xBA && h[3] == 0xBE && h[7] >= 45 && h[7] < 90) return "Java class";

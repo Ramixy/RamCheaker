@@ -30,7 +30,7 @@ namespace InjectHunter
     class MainForm : Form
     {
         public const string AppName = "RamixyCheaker";
-        public const string Version = "4.0";
+        public const string Version = "4.1";
 
         List<Sec> secs = new List<Sec>();
         Sec sOverview, sHidden, sOpen, sMem, sTraces, sBypass, sMods, sFind, sDec, sTools, sWords, shown;
@@ -364,7 +364,7 @@ namespace InjectHunter
             return o;
         }
 
-        LegitScanner legit; DownloadOriginScanner origins; volatile int hidPhase;
+        LegitScanner legit; DownloadOriginScanner origins; HiddenExtraScanner hidx; volatile int hidPhase;
         void StartHidden(List<string> custom)
         {
             if (running != null) return;
@@ -379,6 +379,8 @@ namespace InjectHunter
             legit.Found += f => sHidden.R.Enqueue(f);
             origins = new DownloadOriginScanner();
             origins.Found += f => sHidden.R.Enqueue(f);
+            hidx = new HiddenExtraScanner();
+            hidx.Found += f => sHidden.R.Enqueue(f);
             bool doLegit = tLegit.Checked && !diskFolder, doOrigin = tOrigin.Checked && !diskFolder;
             hidPhase = 0;
             Run(sHidden, "Ищу скрытые читы на " + diskLabel, ct =>
@@ -386,12 +388,14 @@ namespace InjectHunter
                     hidPhase = 0; disk.Run(o, ct);
                     if (doLegit && !ct.IsCancellationRequested) { hidPhase = 1; legit.Run(ct); }
                     if (doOrigin && !ct.IsCancellationRequested) { hidPhase = 2; origins.Run(ct); }
+                    if (!diskFolder && !ct.IsCancellationRequested) { hidPhase = 3; hidx.Run(ct); }
                 },
                 () =>
                 {
-                    if (hidPhase == 1) return 0.86 + 0.08 * legit.Progress;
-                    if (hidPhase == 2) return 0.95;
-                    double k = doLegit || doOrigin ? 0.86 : 1.0;
+                    if (hidPhase == 1) return 0.80 + 0.08 * legit.Progress;
+                    if (hidPhase == 2) return 0.92;
+                    if (hidPhase == 3) return 0.93 + 0.06 * hidx.Progress;
+                    double k = diskFolder ? 1.0 : 0.80;
                     if (!diskFolder && disk.TotalBytes > 0)
                     {
                         double v = Math.Min(0.99, (double)disk.BytesSeen / disk.TotalBytes);
@@ -400,11 +404,12 @@ namespace InjectHunter
                     }
                     return disk.FilesQueued > 0 ? 0.95 * k * disk.FilesDone / (double)disk.FilesQueued : 0;
                 },
-                () => hidPhase == 1 ? "Legit-читы · " + legit.Current
+                () => hidPhase == 3 ? hidx.Current : hidPhase == 1 ? "Legit-читы · " + legit.Current
                     : hidPhase == 2 ? "Откуда скачаны файлы · проверено " + origins.Checked.ToString("N0") + " · " + origins.Current
                     : disk.FilesDone.ToString("N0") + " из " + disk.FilesSeen.ToString("N0") + " · " + disk.Current,
                 () => diskLabel + " · файлов " + disk.FilesSeen.ToString("N0") + ", проанализировано " + disk.FilesDone.ToString("N0") +
-                      (doLegit ? " · legit-читы проверены" : "") + (doOrigin ? " · скачанных файлов с меткой: " + origins.WithMark.ToString("N0") : ""));
+                      (doLegit ? " · legit-читы проверены" : "") + (doOrigin ? " · скачанных файлов с меткой: " + origins.WithMark.ToString("N0") : "") +
+                      (!diskFolder ? " · скрытых потоков NTFS: " + hidx.Streams.ToString("N0") + " · DLL во всех процессах: " + hidx.Modules.ToString("N0") : ""));
         }
 
         // ======================= Открытые читы =======================
@@ -462,10 +467,10 @@ namespace InjectHunter
         Control BuildTraces()
         {
             FlowLayoutPanel tb, op;
-            TableLayoutPanel p = Page(sTraces, "Что запускали и где бывали: история запусков Windows, недавние файлы, загрузки, папки лаунчеров, история браузеров и DNS-кэш — сайты читов видны, даже если файл удалён", out tb, out op, false);
+            TableLayoutPanel p = Page(sTraces, "Всё, что смотрят программы из «Инструментов»: Prefetch (с файлами, которые открывала программа), BAM, PCA, ShimCache, ShellBags, USN-журнал, корзина, окна «Открыть/Сохранить», реестр, автозапуск, Защитник, загрузки, история, cookies и логины браузеров, DNS-кэш", out tb, out op, false);
             StdButtons(sTraces, tb, "Собрать следы", StartTraces);
             tNir = Pill(op, "Также через NirSoft (WinPrefetchView, ExecutedProgramsList, LastActivityView, RecentFiles, USBDeview)", true);
-            sTraces.V.Set(VerdictBar.State.Idle, "Готов", "Находит запуски и файлы с названиями читов, даже если их уже удалили.");
+            sTraces.V.Set(VerdictBar.State.Idle, "Готов", "Находит запуски, файлы и сайты читов, даже если их уже удалили. Prefetch, USN-журнал и чужие корзины читаются только с правами администратора.");
             return p;
         }
 

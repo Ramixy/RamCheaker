@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -147,6 +147,13 @@ namespace InjectHunter
             return null;
         }
 
+        /// <summary>Обычный сайт (поисковик, видео, соцсеть) — слово чита там значит «искали/смотрели», а не «зашли на сайт чита».</summary>
+        public static bool IsNeutral(string urlOrHost)
+        {
+            string host = HostOf(urlOrHost) ?? (urlOrHost ?? "").ToLowerInvariant();
+            return neutralHosts.Any(n => host.Contains(n));
+        }
+
         /// <summary>Название чита в пути или запросе адреса (github.com/x/doomsday-client, google.com/search?q=nursultan).</summary>
         static string PathWord(string url)
         {
@@ -222,7 +229,7 @@ namespace InjectHunter
             if (url == null && dl != null) url = dl.Url ?? dl.Page;
             e.Domain = e.Mark != null && e.Mark.Domain != null ? e.Mark.Domain : dl != null ? (HostOf(dl.Url) ?? HostOf(dl.Page)) : null;
             foreach (string u in new string[] { e.Mark != null ? e.Mark.Host : null, e.Mark != null ? e.Mark.Referrer : null, dl != null ? dl.Url : null, dl != null ? dl.FirstUrl : null, dl != null ? dl.Page : null, dl != null ? dl.Referrer : null })
-                if (e.Site == null && u != null) e.Site = CheatSite(u);
+                if (e.Site == null && u != null && !IsNeutral(u)) e.Site = CheatSite(u);
 
             StringBuilder sb = new StringBuilder();
             if (e.Mark != null) sb.Append(e.Mark.Text);
@@ -408,7 +415,7 @@ namespace InjectHunter
             {
                 if (ct.IsCancellationRequested) return;
                 string site = null;
-                foreach (string u in new string[] { d.Url, d.FirstUrl, d.Page, d.Referrer }) if (site == null && u != null) site = Origin.CheatSite(u);
+                foreach (string u in new string[] { d.Url, d.FirstUrl, d.Page, d.Referrer }) if (site == null && u != null && !Origin.IsNeutral(u)) site = Origin.CheatSite(u);
                 List<Keywords.Kw> kws = string.IsNullOrEmpty(d.Path) ? new List<Keywords.Kw>() : Keywords.Match(Path.GetFileName(d.Path)).Where(k => k.Strong).ToList();
                 if (site == null && kws.Count == 0) continue;
                 bool exists = false;
@@ -484,7 +491,19 @@ namespace InjectHunter
                 }
                 catch { }
                 if (b == null) continue;
-                string s = Encoding.ASCII.GetString(b);
+                foreach (string u in UrlsFromBytes(b)) if (seen.Add(u)) res.Add(u);
+            }
+            return res;
+        }
+
+        /// <summary>Адреса из произвольных байтов (ASCII и UTF-16).</summary>
+        public static List<string> UrlsFromBytes(byte[] b)
+        {
+            HashSet<string> seen = new HashSet<string>();
+            List<string> res = new List<string>();
+            List<string> texts = new List<string> { Encoding.ASCII.GetString(b) };
+            if (b.Length < 64 * 1024 * 1024) texts.Add(Encoding.Unicode.GetString(b, 0, b.Length & ~1));
+            foreach (string s in texts)
                 foreach (Match m in urlRx.Matches(s))
                 {
                     string u = m.Value;
@@ -492,7 +511,6 @@ namespace InjectHunter
                     if (cut > 0) u = u.Substring(0, cut);
                     if (seen.Add(u)) res.Add(u);
                 }
-            }
             return res;
         }
 
